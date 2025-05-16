@@ -23,7 +23,7 @@ FROM ruby:3.3-alpine
 RUN apk add --no-cache sqlite-libs postgresql-libs tzdata
 
 ENV RACK_ENV=production \
-    PORT=9394
+    PORT=7000
 
 WORKDIR /app
 
@@ -31,9 +31,9 @@ WORKDIR /app
 COPY --from=build /usr/local/bundle /usr/local/bundle
 COPY --from=build /app /app
 
-EXPOSE ${APP_PORT}
+EXPOSE ${PORT}
 
 # health-check: exporter must answer
-HEALTHCHECK CMD wget -qO- http://127.0.0.1:${PORT}/metrics || exit 1
+HEALTHCHECK --interval=15s --timeout=2s --retries=3 CMD wget -qO- http://127.0.0.1:${PORT}/metrics || exit 1
 
-ENTRYPOINT ["rackup", "-p", "9394", "-o", "0.0.0.0"]
+CMD bundle exec rackup -o 0.0.0.0 -p $PORT -s falcon

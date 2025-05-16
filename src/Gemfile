@@ -1,18 +1,23 @@
 source 'https://rubygems.org'
 
+# todo ??
+gem "rack-timeout"
+gem "rack-attack"
+
 gem 'async-io'
 gem 'falcon'
 gem 'sinatra'
-gem 'sinatra-reloader'
-gem 'async-websocket'
-gem 'slim'
-gem 'sass'
+gem "sequel"
+gem "sqlite3"             # или  gem "pg" / "mysql2"  – выбери драйвер БД
+gem "faraday"
+gem "net-http-persistent" # адаптер для Faraday-pool
 
 gem 'rack'
 gem 'rackup'
 gem 'sequel'
 gem 'sqlite3'
 
+gem "prometheus-client"
 gem 'stack-service-base'
 
 group :development do

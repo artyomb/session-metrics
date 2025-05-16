@@ -8,7 +8,7 @@ require 'sequel'
 require 'faraday'
 require 'prometheus/client'
 require 'prometheus/middleware/exporter'
-require 'rack/timeout'
+require 'rack-timeout'
 require 'rack/attack'
 
 # ─── constants & env ─────────────────────────────────────────────────────
@@ -22,11 +22,9 @@ INSTANCE     = ENV.fetch('INSTANCE',   Socket.gethostname)
 REQ_TIMEOUT  = Integer(ENV.fetch('REQUEST_TIMEOUT', 15))
 
 # ─── Rack::Timeout & Rack::Attack ────────────────────────────────────────
-Rack::Timeout.service_timeout = REQ_TIMEOUT
-
-class Rack::Attack
-  throttle('req/ip', limit: 100, period: 60) { |req| req.ip }
-end
+# class Rack::Attack
+#   throttle('req/ip', limit: 100, period: 60) { |req| req.ip }
+# end
 
 # ─── Database (Sequel) ───────────────────────────────────────────────────
 DB = Sequel.connect(DB_URL)
@@ -58,7 +56,7 @@ Thread.new do
     break if shutdown
     DB.synchronize do
       threshold = Time.now - IDLE_SEC
-      ACTIVE_G.set({instance: INSTANCE}, SESS.where { updated_at > threshold }.count)
+      ACTIVE_G.set(SESS.where { updated_at > threshold }.count, labels: {instance: INSTANCE})
       SESS.where { updated_at < threshold }.delete
     end
     sleep 10
@@ -67,10 +65,10 @@ end
 
 # ─── Faraday pooled connection ─────────────────────────────────────────--
 CONN = Faraday.new(url: UPSTREAM, ssl: { verify: SSL_VERIFY }) do |f|
-  f.request :retry, max: 2, interval: 0.05, backoff_factor: 2
+  # f.request :retry, max: 2, interval: 0.05, backoff_factor: 2
   f.options.timeout      = 5
   f.options.open_timeout = 2
-  f.adapter :net_http_persistent, pool_size: POOL_SIZE, idle_timeout: 60
+  # f.adapter :net_http_persistent, pool_size: POOL_SIZE, idle_timeout: 60
 end
 
 helpers do
@@ -146,15 +144,15 @@ get '/healthcheck' do
 end
 
 # catch-all proxy
-route '*', via: :all do
-  token = request.cookies[COOKIE] || issue_token
-  touch_session(token)
-  forward_request!
-end
+# route '*', via: :all do
+#   token = request.cookies[COOKIE] || issue_token
+#   touch_session(token)
+#   forward_request!
+# end
 
 # ─── Middleware stack ────────────────────────────────────────────────────
-use Rack::Timeout
-use Rack::Attack
+use Rack::Timeout, service_timeout: REQ_TIMEOUT
+# use Rack::Attack
 use Prometheus::Middleware::Exporter, registry: REG
 
 run Sinatra::Application
