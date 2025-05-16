@@ -1,0 +1,20 @@
+source 'https://rubygems.org'
+
+gem 'async-io'
+gem 'falcon'
+gem 'sinatra'
+gem 'sinatra-reloader'
+gem 'async-websocket'
+gem 'slim'
+gem 'sass'
+
+gem 'rack'
+gem 'rackup'
+gem 'sequel'
+gem 'sqlite3'
+
+gem 'stack-service-base'
+
+group :development do
+  gem 'rubocop'
+end
