@@ -36,4 +36,6 @@ EXPOSE ${PORT}
 # health-check: exporter must answer
 HEALTHCHECK --interval=15s --timeout=2s --retries=3 CMD wget -qO- http://127.0.0.1:${PORT}/metrics || exit 1
 
+# https://socketry.github.io/falcon/guides/deployment/index.html
+# CMD bundle exec falcon serve --bind tcp://0.0.0.0:$PORT config.ru
 CMD bundle exec rackup -o 0.0.0.0 -p $PORT -s falcon

@@ -3,9 +3,10 @@ require 'bundler/setup'
 require 'sinatra'
 require 'securerandom'
 require 'json'
-require 'socket'
 require 'sequel'
 require 'faraday'
+require 'faraday/retry'                  # middleware :retry
+require 'faraday/net_http_persistent'    # адаптер
 require 'prometheus/client'
 require 'prometheus/middleware/exporter'
 require 'rack-timeout'
@@ -18,13 +19,11 @@ UPSTREAM     = ENV.fetch('UPSTREAM',  'http://backend:3000')
 POOL_SIZE    = Integer(ENV.fetch('POOL',            10))
 DB_URL       = ENV.fetch('DB_URL',     'sqlite://sessions.db')
 SSL_VERIFY   = ENV.fetch('SSL_VERIFY', 'true') == 'true'
-INSTANCE     = ENV.fetch('INSTANCE',   Socket.gethostname)
+INSTANCE     = ENV.fetch('INSTANCE',   ENV['STACK_NAME'] || 'session-metrics')
 REQ_TIMEOUT  = Integer(ENV.fetch('REQUEST_TIMEOUT', 15))
 
 # ─── Rack::Timeout & Rack::Attack ────────────────────────────────────────
-# class Rack::Attack
-#   throttle('req/ip', limit: 100, period: 60) { |req| req.ip }
-# end
+Rack::Attack.throttle("requests by ip", limit: 100, period: 60, &:ip)
 
 # ─── Database (Sequel) ───────────────────────────────────────────────────
 DB = Sequel.connect(DB_URL)
@@ -64,11 +63,12 @@ Thread.new do
 end
 
 # ─── Faraday pooled connection ─────────────────────────────────────────--
-CONN = Faraday.new(url: UPSTREAM, ssl: { verify: SSL_VERIFY }) do |f|
-  # f.request :retry, max: 2, interval: 0.05, backoff_factor: 2
+CONN = Faraday.new(url: UPSTREAM, ssl: {verify: SSL_VERIFY}) do |f|
+  f.request  :retry, max: 2, interval: 0.05, backoff_factor: 2
+  # f.response :json, content_type: /\bjson$/                   # удобный парсер
   f.options.timeout      = 5
   f.options.open_timeout = 2
-  # f.adapter :net_http_persistent, pool_size: POOL_SIZE, idle_timeout: 60
+  f.adapter :net_http_persistent, pool_size: POOL_SIZE, idle_timeout: 60
 end
 
 helpers do
@@ -92,7 +92,7 @@ helpers do
   end
 
   def forwarded_headers
-    hdrs = Rack::Utils::HeaderHash.new
+    hdrs = Rack::Headers.new
     env.each do |k, v|
       next unless k.start_with?('HTTP_') || %w[CONTENT_TYPE CONTENT_LENGTH].include?(k)
       hdrs[k.sub(/^HTTP_/, '').split('_').map(&:capitalize).join('-')] = v
@@ -110,19 +110,14 @@ helpers do
 
     resp = CONN.run_request(request.request_method.downcase.to_sym,
                             request.fullpath,
-                            request.body.read,
+                            request.body&.read,
                             forwarded_headers)
-
-    latency = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
-    LAT_HIST.observe({instance: INSTANCE}, latency)
 
     status  resp.status
     headers resp.headers.to_h
     body    resp.body
   rescue Faraday::Error => e
     warn "[proxy] upstream error: #{e.class}: #{e.message}"
-    latency = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start rescue nil
-    LAT_HIST.observe({instance: INSTANCE}, latency) if latency
 
     status 502
     if request.env['HTTP_ACCEPT']&.include?('application/json')
@@ -132,23 +127,27 @@ helpers do
       headers 'Content-Type' => 'text/plain'
       body   "Bad Gateway (#{e.class}) — #{e.message}"
     end
+  ensure
+    latency = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start rescue nil
+    LAT_HIST.observe(latency, labels: {instance: INSTANCE}) if latency
   end
 end
 
 set :logging, false
 disable :protection, :sessions
 
-# health-check
 get '/healthcheck' do
   'pong'
 end
 
 # catch-all proxy
-# route '*', via: :all do
-#   token = request.cookies[COOKIE] || issue_token
-#   touch_session(token)
-#   forward_request!
-# end
+%w[get post put patch delete options].each do |verb|
+  Sinatra::Application.send verb, '/*' do
+    token = request.cookies[COOKIE] || issue_token
+    touch_session(token)
+    forward_request!
+  end
+end
 
 # ─── Middleware stack ────────────────────────────────────────────────────
 use Rack::Timeout, service_timeout: REQ_TIMEOUT

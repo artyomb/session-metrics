@@ -10,7 +10,8 @@ gem 'sinatra'
 gem "sequel"
 gem "sqlite3"             # или  gem "pg" / "mysql2"  – выбери драйвер БД
 gem "faraday"
-gem "net-http-persistent" # адаптер для Faraday-pool
+gem 'faraday-retry',               '~> 2.2'
+gem 'faraday-net_http_persistent', '~> 2.0'
 
 gem 'rack'
 gem 'rackup'
